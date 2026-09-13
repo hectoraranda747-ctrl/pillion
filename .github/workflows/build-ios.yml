@@ -1,0 +1,135 @@
+name: Build iOS unsigned IPA
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      # Kotlin 2.1.0 targets Xcode 16.0; do not use the runner's moving default.
+      DEVELOPER_DIR: /Applications/Xcode_16.0.app/Contents/Developer
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install XcodeGen 2.42.0
+        run: |
+          curl --fail --location --retry 3 \
+            https://github.com/yonaskolb/XcodeGen/releases/download/2.42.0/xcodegen.zip \
+            -o "$RUNNER_TEMP/xcodegen.zip"
+          echo "a760b4bf97460341316a2c00d8c87b2946c6c2729eb57e9a72abb3ef7bc0ef82  $RUNNER_TEMP/xcodegen.zip" | shasum -a 256 -c -
+          unzip -q "$RUNNER_TEMP/xcodegen.zip" -d "$RUNNER_TEMP/xcodegen-install"
+          echo "$RUNNER_TEMP/xcodegen-install/xcodegen/bin" >> "$GITHUB_PATH"
+
+      - name: Prepare clean checkout and record toolchain
+        run: |
+          test -d "$DEVELOPER_DIR"
+          test -f iosApp/project.yml
+          test -f iosApp/build-ipa.sh
+          test -f iosApp/Extension/Info.plist
+          test -f iosApp/Extension/SampleHandler.swift
+          test -f gradle/wrapper/gradle-wrapper.jar
+          # Both targets reference this gitignored file. No team or signing secrets needed.
+          touch iosApp/Signing.xcconfig
+          chmod +x gradlew
+          # AGP is configured by the shared module even for Kotlin/Native tasks.
+          test -d "${ANDROID_HOME:?The macOS runner must provide the Android SDK}"
+          printf 'sdk.dir=%s\n' "$ANDROID_HOME" > local.properties
+          {
+            git rev-parse HEAD
+            sw_vers
+            xcodebuild -version
+            xcrun --sdk iphoneos --show-sdk-version
+            xcodegen --version
+            java -version 2>&1
+            ./gradlew --version
+          } | tee "$RUNNER_TEMP/ios-toolchain.txt"
+
+      - name: Build device IPA using the existing script
+        # Generates iosApp.xcodeproj, builds Release for generic/platform=iOS,
+        # embeds PillionBroadcast and applies local ad-hoc seals (no Apple identity).
+        run: bash iosApp/build-ipa.sh Release 2>&1 | tee "$RUNNER_TEMP/ios-build.log"
+
+      - name: Verify packaged app and ReplayKit extension
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import plistlib
+          import zipfile
+
+          ipa = pathlib.Path('iosApp/Pillion.ipa')
+          app = 'Payload/iosApp.app/'
+          extension = app + 'PlugIns/PillionBroadcast.appex/'
+          with zipfile.ZipFile(ipa) as archive:
+              assert archive.testzip() is None, 'Corrupt IPA'
+              names = set(archive.namelist())
+              app_info = plistlib.loads(archive.read(app + 'Info.plist'))
+              ext_info = plistlib.loads(archive.read(extension + 'Info.plist'))
+              assert app_info['CFBundlePackageType'] == 'APPL'
+              assert ext_info['CFBundlePackageType'] == 'XPC!'
+              assert ext_info['CFBundleIdentifier'] == app_info['CFBundleIdentifier'] + '.broadcast'
+              for key in ('CFBundleVersion', 'CFBundleShortVersionString'):
+                  assert app_info[key] == ext_info[key], f'Mismatched {key}'
+              replaykit = ext_info['NSExtension']
+              assert replaykit['NSExtensionPointIdentifier'] == 'com.apple.broadcast-services-upload'
+              assert replaykit['NSExtensionPrincipalClass'] == 'PillionBroadcast.SampleHandler'
+              assert replaykit['RPBroadcastProcessMode'] == 'RPBroadcastProcessModeSampleBuffer'
+              for root, info in ((app, app_info), (extension, ext_info)):
+                  assert info['CFBundleSupportedPlatforms'] == ['iPhoneOS'], 'Not a device build'
+                  binary = root + info['CFBundleExecutable']
+                  assert archive.getinfo(binary).file_size > 0, f'Missing executable: {binary}'
+                  assert root + '_CodeSignature/CodeResources' in names, 'Missing ad-hoc seal'
+              assert any(n.startswith(app + 'compose-resources/composeResources/') and not n.endswith('/')
+                         for n in names), 'Missing Compose resources'
+              assert not any(n.endswith('embedded.mobileprovision') for n in names), 'Unexpected provisioning profile'
+          print('Verified IPA: device app, PillionBroadcast, ReplayKit metadata, Compose resources and seals.')
+          PY
+          VERIFY_DIR="$RUNNER_TEMP/pillion-ipa-check"
+          mkdir -p "$VERIFY_DIR"
+          ditto -x -k iosApp/Pillion.ipa "$VERIFY_DIR"
+          APP="$VERIFY_DIR/Payload/iosApp.app"
+          EXT="$APP/PlugIns/PillionBroadcast.appex"
+          for BUNDLE in "$EXT" "$APP"; do
+            EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$BUNDLE/Info.plist")
+            xcrun lipo -verify_arch arm64 "$BUNDLE/$EXECUTABLE"
+            codesign --verify --deep --strict --verbose=2 "$BUNDLE"
+            codesign -dv "$BUNDLE" 2>&1 | grep -q 'Signature=adhoc'
+          done
+          shasum -a 256 iosApp/Pillion.ipa | tee "$RUNNER_TEMP/Pillion.ipa.sha256"
+
+      - name: Upload verified IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pillion-iOS-unsigned
+          path: iosApp/Pillion.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pillion-iOS-build-logs
+          path: |
+            ${{ runner.temp }}/ios-toolchain.txt
+            ${{ runner.temp }}/ios-build.log
+            ${{ runner.temp }}/Pillion.ipa.sha256
+            iosApp/iosApp.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+          if-no-files-found: ignore
+          retention-days: 14
