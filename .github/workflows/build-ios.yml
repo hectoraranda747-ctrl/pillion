@@ -28,6 +28,12 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Prepare the selected Xcode iOS platform
+        run: |
+          sudo xcode-select --switch "$DEVELOPER_DIR"
+          sudo xcodebuild -runFirstLaunch
+          xcodebuild -downloadPlatform iOS -buildVersion 18.0
+
       - name: Install XcodeGen 2.42.0
         run: |
           curl --fail --location --retry 3 \
