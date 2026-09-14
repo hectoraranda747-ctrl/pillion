@@ -113,7 +113,10 @@ Consulta la [compatibilidad de Kotlin](https://kotlinlang.org/docs/multiplatform
 y el [inventario del runner](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-Readme.md).
 
 El runner también selecciona Xcode con `xcode-select`, ejecuta `xcodebuild
--runFirstLaunch` y descarga su plataforma con `xcodebuild -downloadPlatform iOS`.
+-runFirstLaunch`, inicializa CoreSimulator con `xcrun simctl list` y descarga su
+plataforma con `xcodebuild -downloadPlatform iOS`. La inicialización evita el error
+«Unable to connect to simulator» observado en el runner; corresponde a la
+[solución documentada por runner-images](https://github.com/actions/runner-images/issues/12862).
 Esto corrige el error observado «iOS 18.0 is not installed» incluso para el destino
 genérico de iPhone. La descarga puede aparecer como «iOS 18.0 Simulator»; la build
 sigue usando `generic/platform=iOS`. Xcode 16.0 no admite la opción `-buildVersion`
@@ -135,11 +138,13 @@ depende del perfil y del firmador, y no se debe dar por disponible con una cuent
 gratuita. Sin acceso al grupo, el código ya usa 15 FPS y calidad JPEG 0.4 como
 valores predeterminados. No se elimina ni reescribe esa lógica.
 
-La [ejecución de comprobación](https://github.com/hectoraranda747-ctrl/pillion/actions/runs/34779653767)
-compiló la app y la extensión en macOS y validó la estructura de la IPA. Detectó
-después un orden incorrecto de argumentos en la comprobación ARM64, ya corregido
-como `xcrun lipo "$BUNDLE/$EXECUTABLE" -verify_arch arm64`. Para descargar una IPA,
-elige una ejecución posterior que termine en verde y publique el artifact.
+La [ejecución verificada del 14 de septiembre de 2026](https://github.com/hectoraranda747-ctrl/pillion/actions/runs/34886070952)
+terminó correctamente en 17 minutos y 11 segundos. Compiló la app y la extensión,
+validó la estructura ReplayKit, los binarios ARM64 y los sellos ad hoc, y publicó
+[Pillion-iOS-unsigned (14,1 MB)](https://github.com/hectoraranda747-ctrl/pillion/actions/runs/34886070952/artifacts/10365427631).
+SHA-256 de `Pillion.ipa`: `b20e83941d672d338e1f99600adc27c6ed280842611246ca369274575b1a2a69`.
+GitHub mostró avisos de obsolescencia de Node.js 20 y `setup-java@v4`; no impidieron
+la build. Se conserva aquí la configuración ejecutada y comprobada.
 No se ha probado la instalación en un iPhone ni la conexión física a una moto.
 
 ## 5. Actualizar desde el repositorio original
