@@ -32,6 +32,8 @@ jobs:
         run: |
           sudo xcode-select --switch "$DEVELOPER_DIR"
           sudo xcodebuild -runFirstLaunch
+          # Warm up CoreSimulator before downloading (runner-images issue #12862).
+          xcrun simctl list > /dev/null
           xcodebuild -downloadPlatform iOS
 
       - name: Install XcodeGen 2.42.0
