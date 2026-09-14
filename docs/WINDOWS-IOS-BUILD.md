@@ -112,6 +112,13 @@ Xcode, el workflow fallará explícitamente: habrá que revisar juntos Kotlin y 
 Consulta la [compatibilidad de Kotlin](https://kotlinlang.org/docs/multiplatform/multiplatform-compatibility-guide.html)
 y el [inventario del runner](https://github.com/actions/runner-images/blob/main/images/macos/macos-15-Readme.md).
 
+El runner también selecciona Xcode con `xcode-select`, ejecuta `xcodebuild
+-runFirstLaunch` y descarga su plataforma con `xcodebuild -downloadPlatform iOS`.
+Esto corrige el error observado «iOS 18.0 is not installed» incluso para el destino
+genérico de iPhone. La descarga puede aparecer como «iOS 18.0 Simulator»; la build
+sigue usando `generic/platform=iOS`. Xcode 16.0 no admite la opción `-buildVersion`
+de versiones posteriores.
+
 Es un proceso repetible, pero no una garantía de binarios idénticos: la imagen de
 GitHub y Java 17 reciben actualizaciones y el proyecto original permite versiones
 de SmartDeviceLink desde 7.6.1, con dependencias transitivas. Se conserva esa
@@ -128,9 +135,12 @@ depende del perfil y del firmador, y no se debe dar por disponible con una cuent
 gratuita. Sin acceso al grupo, el código ya usa 15 FPS y calidad JPEG 0.4 como
 valores predeterminados. No se elimina ni reescribe esa lógica.
 
-No se ha ejecutado Xcode desde Windows ni se ha probado la IPA en un iPhone en esta
-preparación. La primera ejecución en tu fork confirmará la compilación real; una
-build correcta tampoco acredita la conexión física a una moto.
+La [ejecución de comprobación](https://github.com/hectoraranda747-ctrl/pillion/actions/runs/34779653767)
+compiló la app y la extensión en macOS y validó la estructura de la IPA. Detectó
+después un orden incorrecto de argumentos en la comprobación ARM64, ya corregido
+como `xcrun lipo "$BUNDLE/$EXECUTABLE" -verify_arch arm64`. Para descargar una IPA,
+elige una ejecución posterior que termine en verde y publique el artifact.
+No se ha probado la instalación en un iPhone ni la conexión física a una moto.
 
 ## 5. Actualizar desde el repositorio original
 
