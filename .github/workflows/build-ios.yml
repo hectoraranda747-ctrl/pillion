@@ -113,7 +113,7 @@ jobs:
           EXT="$APP/PlugIns/PillionBroadcast.appex"
           for BUNDLE in "$EXT" "$APP"; do
             EXECUTABLE=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$BUNDLE/Info.plist")
-            xcrun lipo -verify_arch arm64 "$BUNDLE/$EXECUTABLE"
+            xcrun lipo "$BUNDLE/$EXECUTABLE" -verify_arch arm64
             codesign --verify --deep --strict --verbose=2 "$BUNDLE"
             codesign -dv "$BUNDLE" 2>&1 | grep -q 'Signature=adhoc'
           done
